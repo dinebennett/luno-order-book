@@ -1,0 +1,83 @@
+html, body {
+    height: 100%;
+}
+
+body {
+    border: 1px solid transparent;
+    font-family: 'Open Sans', sans-serif;
+}
+
+h1 {
+    font-family: 'Montserrat', sans-serif;
+}
+
+.content {
+    min-height: 100%;
+    position: relative;
+    margin-bottom: -40px;
+}
+
+.footer {
+    text-align: center;
+    width: 100%;
+    display: block;
+    height: 40px;
+    position: relative;
+    margin: 0 auto;
+    color: #969696;
+}
+
+.footer > p {
+    margin-bottom: 0;
+}
+
+.footer-inner {
+    padding-top: 15px;
+}
+
+.centered {
+    text-align: center;
+}
+
+.smaller-text {
+    font-size: 12px;
+}
+
+.main-section {
+    margin: 0 auto 0 auto;
+    width: 350px;
+}
+
+.no-marg {
+    margin: 0;
+}
+
+.screen {
+    height: 350px;
+    width: 350px;
+    background-color: #e5e8e3;
+    font-family: 'VT323', monospace;
+    font-size: 25px;
+}
+
+.screen-header {
+    text-align: center;
+    background-color: #067127;
+    color: #f6f6f6;
+}
+
+.screen-body {
+    padding: 0 3px 0 3px;
+}
+
+.inputForm {
+    margin-top: 10px;
+}
+
+.settings-form {
+    margin-top: 20px;
+}
+
+.btn-contain {
+    overflow-x: hidden;
+}
