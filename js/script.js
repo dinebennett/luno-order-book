@@ -6,101 +6,104 @@ window.onload = function () {
 
         data: {
 
-            ws: null,
             asks: [],
             bids: [],
-            DISPLAY: 30,
-            INITIAL_MIN: null,
-            sequence: null,
+            DISPLAY_LIMIT: 250,
+            last_sequence: null,
+            retry_wait: 32,
+            latest_updates: [],
+            rolling_index: 0,
+            latestClass: 'updated-order',
+            error_message: null,
+            scrolled_once: false
 
         },
 
         created: function () {
 
-            this.ws = this.connect("wss://ws.luno.com/XBTZAR");
+            this.connect("wss://ws.luno.com/XBTZAR");
 
         },
 
-        computed: {
-            asksToRender: function () {
 
-                if (this.asks.length == 0) {
-                    return [];
-                }
-
-                let m = new Map();
-                let minIndex = parseInt(this.asks[0].price);
-                let that = this;
-                let temp = [];
-
-                this.asks.forEach(function (a) {
-                    let p = parseInt(a.price);
-                    if (p == that.INITIAL_MIN) {
-                        temp.push(JSON.stringify(a));
-                    }
-                    let v = parseFloat(a.volume);
-                    minIndex = (p < minIndex ? p : minIndex);
-                    if (m.get(p) === undefined) {
-                        m.set(p, v);
-                    } else {
-                        m.set(p, m.get(p) + v);
-                    }
-                });
-
-                console.log("LIST " + temp.length);
-
-                if (this.INITIAL_MIN == null) {
-                    this.INITIAL_MIN = minIndex;
-                }
-
-                let r = [{"price": minIndex, "volume": m.get(minIndex)}];
-                let i = minIndex + 1;
-                let safety = 0; //to prevent infinite loop
-                let n = (m.size < this.DISPLAY ? m.size : this.DISPLAY);
-
-                while ((r.length < n ) && (safety < 10000)) {
-                    if (m.has(i)) {
-                        r.push({"price": i, "volume": m.get(i)});
-                    }
-                    i = i + 1;
-                    safety = safety + 1;
-                }
-                return r.reverse();
-
-            },
-            bidsToRender: function () {
-                return this.sortOrders("DESC", this.bids).slice(0, 30);
+        updated: function () {
+            if (!this.scrolled_once && (this.asks.length > 0)) {
+                this.$refs.askstable.scrollTop = this.$refs.askstable.scrollHeight;
+                this.scrolled_once = true;
             }
         },
 
+        computed: {
+
+            asksToRender: function () {
+                if (this.asks.length == 0) {
+                    return [];
+                } else {
+                    return this.prepareSquashedArray(this.asks, this.DISPLAY_LIMIT).reverse();
+                }
+            },
+
+            bidsToRender: function () {
+                if (this.bids.length == 0) {
+                    return [];
+                } else {
+                    return this.prepareSquashedArray(this.bids, this.DISPLAY_LIMIT);
+                }
+            },
+
+            spread: function () {
+                if (this.asks[0] && this.bids[0]) {
+                    return this.asks[0].price - this.bids[0].price;
+                } else {
+                    return "";
+                }
+            }
+
+        },
+
+        /* Any methods needed */
         methods: {
 
             connect: function (uri) {
+
+                //TODO: think about how to detect a network failure - what happens if we have not had a socket event in a while?
+
                 this.ws = new WebSocket(uri);
+                this.error_message = "Connecting, please wait...";
                 let that = this;
-                let ws = this.ws;
+
                 this.ws.addEventListener('message', function (e) {
-                    if ((e.data) && (e.data.length > 2) && (that.sequence != null) && (parseInt(JSON.parse(e.data).sequence) != (that.sequence + 1))) {
-                        console.log("RED ALERT: " + that.sequence + " " + JSON.parse(e.data).sequence);
-                        that.sequence = null;
+                    let data = JSON.parse(e.data);
+                    let sequence = parseInt(data.sequence); // make sure we have converted it to integer
+                    if (sequence && (that.last_sequence != null) && (sequence != (that.last_sequence + 1))) {
+                        console.log("ERROR! Sequence error, closing socket.");
+                        that.error_message = "Sequence error, wait for restart...";
                         that.asks = [];
                         that.bids = [];
-                        ws.close();
-                    }
-                    if ((e.data) && (e.data.length > 2)) {
-                        that.sequence = parseInt(JSON.parse(e.data).sequence);
-                        that.processSocketEvent(JSON.parse(e.data));
+                        that.last_sequence = null;
+                        that.ws.close();
+                    } else if (sequence) {
+                        that.error_message = "";
+                        that.last_sequence = sequence;
+                        that.processSocketEvent(data);
                     }
                 });
+
                 this.ws.addEventListener('error', function () {
-                    alert("Failed to connect, please check your internet connection and refresh the page.");
+                    console.log("ERROR! Socket error, closing socket.");
+                    that.error_message = "Socket error, wait for restart...";
+                    that.last_sequence = null;
+                    that.ws.close();
                 });
-                this.ws.onclose = function (e) {
-                    console.log('Socket is closed. Reconnect will be attempted in 1 second.', e.reason);
+
+                this.ws.onclose = function () {
+                    that.retry_wait = that.retry_wait * 2;
+                    that.error_message = "Socket closed, retrying in " + that.retry_wait + " milliseconds";
+                    console.log("SOCKET CLOSED. Milliseconds to retry: " + that.retry_wait);
                     setTimeout(function () {
                         that.ws = null;
                         that.connect("wss://ws.luno.com/XBTZAR");
-                    }, 5000); //TODO: do gradual backoof
+                    }, that.retry_wait);
                 };
 
             },
@@ -108,36 +111,26 @@ window.onload = function () {
             processSocketEvent: function (event) {
 
                 if ((event.asks) && (event.bids)) {
+
                     // This is the initial event
                     this.asks = event.asks;
                     this.bids = event.bids;
+
                 } else {
+
                     // This is a subsequent update event
-
-                    //TODO can take out
-                    if ((event.trade_updates != null) && (event.create_update != null)) {
-                        debugger;;
-                    }
-
                     if (event.trade_updates != null) {
                         let that = this;
                         event.trade_updates.forEach(function (u) {
-                            console.log("UPDATE: " + Math.ceil(Number(u.counter) / Number(u.base)));
-                            if (Math.ceil(Number(u.counter) / Number(u.base)) == that.INITIAL_MIN) {
-                                console.log(event.trade_updates);
-                            }
-                            that.deleteOrderIfExists(u);
+                            that.updateExistingOrder(u);
                         });
                     }
                     if (event.create_update != null) {
                         this.processNewOrder(event.create_update);
-                        console.log("NEW ");
                     }
                     if (event.delete_update != null) {
                         this.processDeletedOrder(event.delete_update);
-                        console.log("DELETE");
                     }
-
 
                 }
 
@@ -147,96 +140,129 @@ window.onload = function () {
 
                 let order = {
                     id: update.order_id,
-                    volume: update.volume,
-                    price: update.price
+                    volume: parseFloat(update.volume),
+                    price: parseInt(update.price)
                 };
 
-                if (parseInt(order.price) == this.INITIAL_MIN) {
-                    console.log("NEW MIN: " + JSON.stringify(update));
-                }
+                this.updateLatest(order.price);
 
+                // insert the update into *ORDERED* array
                 if (update.type == "ASK") {
-                    this.asks.push(order);
+                    for (let i = 0; i < this.asks.length; i++) {
+                        if (this.asks[i].price >= order.price) {
+                            this.asks.splice(i, 0, order);
+                            break;
+                        }
+                    }
                 } else if (update.type == "BID") {
-                    this.bids.push(order);
-                } else {
-                    debugger;
-                    ;
+                    for (let i = 0; i < this.bids.length; i++) {
+                        if (this.bids[i].price <= order.price) {
+                            this.bids.splice(i, 0, order);
+                            break;
+                        }
+                    }
                 }
 
             },
 
             processDeletedOrder: function (order) {
-                if (parseInt(order.price) == this.INITIAL_MIN) {
-                    console.log("DELETE MIN: " + JSON.stringify(order));
-                }
+
+                let that = this;
                 this.asks = this.asks.filter(function (a) {
-                    return (a.id != order.order_id);
+                    if ((a.id === order.order_id)) {
+                        that.updateLatest(a.price); // TODO: side effect, review later
+                    }
+                    return (a.id !== order.order_id);
                 });
                 this.bids = this.bids.filter(function (b) {
-                    return (b.id != order.order_id);
+                    if ((b.id === order.order_id)) {
+                        that.updateLatest(b.price); // TODO: side effect, review later
+                    }
+                    return (b.id !== order.order_id);
                 });
+
             },
 
-            deleteOrderIfExists: function (order) {
+            /*
+             This is time complexity O(2n) for both asks AND bids. We could do a for loop and splice the array instead of filtering, but
+             since updates don't happen too frequently it is cleaner to use a map and a filter.
+             */
+            updateExistingOrder: function (order) {
 
-                //TODO: remove, this is a sanity check
-                let ask = this.asks.filter(function (a) {
-                    return (order.order_id == a.id);
-                })[0];
-                let bid = this.bids.filter(function (b) {
-                    return (order.order_id == b.id);
-                })[0];
-
-                //Keep this part
+                let that = this;
                 this.asks = this.asks.map(function (a) {
                     let ask = a;
-                    if (order.order_id == a.id) {
-                        ask.volume = parseFloat(ask.volume) - parseFloat(order.base);
-                        console.log("current: " + ask.volume + ", base: " + order.base);
+                    if (order.order_id === a.id) {
+                        ask.volume = that.roundAfterSubtract((parseFloat(ask.volume) - parseFloat(order.base)));
+                        that.updateLatest(a.price); // TODO: side effect, review later
                     }
                     return ask;
-                });
-                this.bids = this.bids.filter(function (b) {
-                    return (order.order_id != b.id);
+                }).filter(function (a) {
+                    return (a.volume > 0);
                 });
 
-                //TODO: remove, this is a sanity check
-                if (ask !== undefined) {
-                    if (parseInt(ask.price) == this.INITIAL_MIN) {
-                        console.log("REMOVE ASK ORDER_ID: " + ask.id + " volume: " + ask.volume + " price: " + ask.price);
-                        console.log("TRADE UPDATE " + order.order_id);
+                this.bids = this.bids.map(function (b) {
+                    let bid = b;
+                    if (order.order_id === b.id) {
+                        bid.volume = that.roundAfterSubtract((parseFloat(bid.volume) - parseFloat(order.base)));
+                        that.updateLatest(b.price); // TODO: side effect, review later
                     }
-                }
-                if (bid !== undefined) {
-                    if (parseInt(bid.price) == this.INITIAL_MIN) {
-                        console.log("REMOVE BID" + bid.id + " volume: " + bid.volume);
-                    }
-                }
-
-                if ((ask) && (parseInt(ask.price) != Math.ceil(Number(order.counter) / Number(order.base)))) {
-                    debugger;
-                    ;
-                }
+                    return bid;
+                }).filter(function (b) {
+                    return (b.volume > 0);
+                });
 
             },
 
-            sortOrders: function (type, orders) {
+            /* Squashes the array by adding up volumes of the same price, and returns first n items in squashed array. */
+            prepareSquashedArray(a, n) {
 
-                // TODO if number conversion fails, then what
+                let priceToCount = parseInt(a[0].price);
+                let runningTotal = 0.0;
+                let r = [];
 
-                return orders.sort(function (a, b) {
-                    if (parseInt(a.price) > parseInt(b.price)) {
-                        return (type == "DESC" ? -1 : 1);
+                for (let i = 0; i < a.length; i++) {
+                    if (priceToCount === parseInt(a[i].price)) {
+                        runningTotal = runningTotal + parseFloat(a[i].volume);
+                    } else {
+                        r.push({
+                            "volume": runningTotal,
+                            "price": priceToCount,
+                            "isLatest": this.isLatest(priceToCount)
+                        });
+                        priceToCount = parseInt(a[i].price);
+                        runningTotal = parseFloat(a[i].volume);
                     }
-                    else if (parseInt(a.price) < parseInt(b.price)) {
-                        return (type == "DESC" ? 1 : -1);
+                    if (r.length === n) {
+                        return r;
                     }
-                    else {
-                        return 0;
-                    }
-                });
+                }
 
+                return r;
+
+            },
+
+            /* round to 9 decimal places */
+            roundAfterSubtract(value)
+            {
+                return (Math.floor(value * 1000000000)) / 1000000000;
+            },
+
+            /* check whether the prices is amongst the latest updated (for styling) */
+            isLatest(price)
+            {
+                return (this.latest_updates.indexOf(parseInt(price)) > -1);
+            },
+
+            /* update the list of prices that have most recently changed */
+            updateLatest(price)
+            {
+                if (this.latest_updates.length < 10) {
+                    this.latest_updates.push(parseInt(price));
+                } else {
+                    this.rolling_index = (this.rolling_index + 1) % 10;
+                    this.latest_updates[this.rolling_index] = parseInt(price);
+                }
             }
 
         }
