@@ -22,6 +22,6 @@ I have used Vue.js as the framework. Things to note about Vue:
 * 'computed' is the section that handles computed properties that need to be rendered
 * 'methods' is a section where any functions can be stored - most of my code is here
 
-## Feedback
+## View on Github Pages
 
-Please send feedback/questions/issues to dine.bennett@gmail.com. Thank you!
+Now available here: https://dinebennett.github.io/luno-order-book/
